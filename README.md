@@ -20,27 +20,27 @@ To run inference or fine-tune on your own dataset, check the main.py and test.py
 
 * Initialization:
 
- * data_dir: folder with images.
+  * data_dir: folder with images.
+  
+  * annotations_file: JSON with annotations.
+  
+  * transforms: optional image transformations.
  
- * annotations_file: JSON with annotations.
- 
- * transforms: optional image transformations.
-
-* Parses annotations and builds a mapping from image IDs to their annotations.
+ * Parses annotations and builds a mapping from image IDs to their annotations.
 
 * __getitem__:
 
- * Loads an image by index.
- 
- * Retrieves and normalizes bounding boxes relative to image size.
- 
- * Returns transformed image tensor and target dictionary with:
- 
- * boxes: normalized bounding boxes.
- 
- * labels: category IDs.
- 
- * image_id: tensor with image identifier.
+  * Loads an image by index.
+  
+  * Retrieves and normalizes bounding boxes relative to image size.
+  
+  * Returns transformed image tensor and target dictionary with:
+  
+  * boxes: normalized bounding boxes.
+  
+  * labels: category IDs.
+  
+  * image_id: tensor with image identifier.
 
 * Supports batching with a custom collate_fn to stack images and keep targets as lists (for variable-length annotations).
 
