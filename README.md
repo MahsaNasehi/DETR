@@ -20,32 +20,32 @@ To run inference or fine-tune on your own dataset, check the main.py and test.py
 
 * Initialization:
 
-data_dir: folder with images.
-
-annotations_file: JSON with annotations.
-
-transforms: optional image transformations.
+ * data_dir: folder with images.
+ 
+ * annotations_file: JSON with annotations.
+ 
+ * transforms: optional image transformations.
 
 * Parses annotations and builds a mapping from image IDs to their annotations.
 
 * __getitem__:
 
-Loads an image by index.
-
-Retrieves and normalizes bounding boxes relative to image size.
-
-Returns transformed image tensor and target dictionary with:
-
-boxes: normalized bounding boxes.
-
-labels: category IDs.
-
-image_id: tensor with image identifier.
+ * Loads an image by index.
+ 
+ * Retrieves and normalizes bounding boxes relative to image size.
+ 
+ * Returns transformed image tensor and target dictionary with:
+ 
+ * boxes: normalized bounding boxes.
+ 
+ * labels: category IDs.
+ 
+ * image_id: tensor with image identifier.
 
 * Supports batching with a custom collate_fn to stack images and keep targets as lists (for variable-length annotations).
 
 ## DETR Model Components
-1. PositionEncodingSineCosine
+### 1. PositionEncodingSineCosine
  * Generates sine-cosine positional encodings for 2D feature maps.
  
  * Input: mask tensor [B, H, W] (True for padded pixels).
@@ -54,7 +54,7 @@ image_id: tensor with image identifier.
  
  * Helps the transformer know spatial positions without learned embeddings.
 
-2. BackboneWithPE
+### 2. BackboneWithPE
  * Wraps a CNN backbone (e.g., ResNet-50) without the final pooling and FC layers.
  
  * Extracts feature maps [B, 2048, H/32, W/32].
@@ -63,7 +63,7 @@ image_id: tensor with image identifier.
  
  * Returns: (features, mask, pos_encoding).
 
-3. Transformer
+### 3. Transformer
  * Transformer encoder-decoder stack built with PyTorch's nn.TransformerEncoder and nn.TransformerDecoder.
  
  * Inputs:
@@ -78,7 +78,7 @@ image_id: tensor with image identifier.
  
  * Outputs the decoder hidden states for object queries.
 
-4. DETR (Detection Transformer)
+### 4. DETR (Detection Transformer)
  * Integrates backbone, transformer, and prediction heads.
  
  * Key modules:
@@ -109,7 +109,7 @@ image_id: tensor with image identifier.
   
   * 'pred_boxes': bounding boxes [B, num_queries, 4]
 
-5. MLP
+### 5. MLP
  * Simple multi-layer perceptron for box regression.
  
  * Configurable layers, hidden dims, and output dims.
