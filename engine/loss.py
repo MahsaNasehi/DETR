@@ -36,6 +36,7 @@ import torch
 #     # generalized IoU: IoU - (enclosing_area - union)/enclosing_area (skipped for simplicity)
 #     return iou
 
+
 def hungarian_match(pred_logits, pred_boxes, target_labels, target_boxes):
     # (no batch for simplicity)
     """
@@ -55,7 +56,9 @@ def hungarian_match(pred_logits, pred_boxes, target_labels, target_boxes):
     # print("pred_logits.shape:", pred_logits.shape)
 
     # cost_class = -pred_probs[:, target_labels]  # negative prob for target class
-    cost_class = -pred_probs.gather(1, target_labels[None].repeat(pred_probs.shape[0], 1))
+    cost_class = -pred_probs.gather(
+        1, target_labels[None].repeat(pred_probs.shape[0], 1)
+    )
 
     # 2. Compute bbox cost: L1 distance
     # cost_bbox = torch.cdist(pred_boxes, target_boxes, p=1)
@@ -82,59 +85,149 @@ def hungarian_match(pred_logits, pred_boxes, target_labels, target_boxes):
     # indices of the rows (typically predictions), indices of the columns (typically ground truths)
     return row_ind, col_ind
 
-def detr_loss(pred_logits, pred_boxes, target_labels, target_boxes):
-    if target_labels.numel() == 0:
-        # No objects in this image
-        # You can still compute classification loss vs. "no object" class
-        # Or just return 0.0
-        return torch.tensor(0.0, device=pred_logits.device)
-    λ_cls = 1.0
-    λ_bbox = 5.0
-    λ_giou = 2.0
 
-    # Get matches
-    indices_pred, indices_target = hungarian_match(pred_logits, pred_boxes, target_labels, target_boxes)
+# def detr_loss(pred_logits, pred_boxes, target_labels, target_boxes, empty_weight=0.1):
+#     """
+#     Args:
+#         pred_logits: [num_queries, num_classes + 1] — class 0 is "no-object"
+#         pred_boxes: [num_queries, 4]
+#         target_labels: [num_targets] — values in [0, num_classes-1]
+#         target_boxes: [num_targets, 4]
+#         num_classes: number of real classes (excluding no-object)
+#         empty_weight: class weights for CE loss — should be [num_classes + 1]
+#     """
+#     device = pred_logits.device
+#     num_queries = pred_logits.shape[0]
+#     num_classes = pred_logits.shape[1]
+#     if target_labels.numel() == 0:
+#         # All queries are no-object (class 0)
+#         target_classes = torch.zeros((num_queries,), dtype=torch.int64, device=device)
+#         loss_ce = F.cross_entropy(pred_logits, target_classes, weight=empty_weight)
+#         return loss_ce
 
-    # Select matched predictions and targets
-    matched_pred_logits = pred_logits[indices_pred]
-    matched_pred_boxes = pred_boxes[indices_pred]
-    # These lines reorder the ground truth labels and boxes to match the order of the predictions.
-    matched_target_labels = target_labels[indices_target]
-    matched_target_boxes = target_boxes[indices_target]
+#     # Hungarian matching
+#     indices_pred, indices_target = hungarian_match(
+#         pred_logits, pred_boxes, target_labels, target_boxes
+#     )
 
-    # Classification loss (cross-entropy)
-    cls_loss = F.cross_entropy(matched_pred_logits, matched_target_labels)
+#     # Initialize all as no-object (class 0)
+#     target_classes = torch.zeros((num_queries,), dtype=torch.int64, device=device)
 
-    # Box regression loss (L1 loss)
-    bbox_loss = F.l1_loss(matched_pred_boxes, matched_target_boxes)
+#     # Assign real labels (shifted by +1)
+#     target_classes[indices_pred] = target_labels[indices_target] + 1
 
-    # GIoU loss
-    # pred_boxes_xyxy = box_cxcywh_to_xyxy(matched_pred_boxes)
-    # target_boxes_xyxy = box_cxcywh_to_xyxy(matched_target_boxes)
+#     # Classification loss
+#     loss_ce = F.cross_entropy(pred_logits, target_classes, weight=empty_weight)
 
-    giou = torch_giou(matched_pred_boxes, matched_target_boxes)
-    giou_loss = 1.0 - giou.diag().mean()
+#     # Box regression loss (only for matched ones)
+#     matched_pred_boxes = pred_boxes[indices_pred]
+#     matched_target_boxes = target_boxes[indices_target]
+#     loss_bbox = F.l1_loss(matched_pred_boxes, matched_target_boxes)
 
-    # Total loss with weights
+#     giou = torch_giou(matched_pred_boxes, matched_target_boxes)
+#     loss_giou = 1.0 - giou.diag().mean()
+
+#     # Combine
+#     λ_cls, λ_bbox, λ_giou = 1.0, 5.0, 2.0
+#     total_loss = λ_cls * loss_ce + λ_bbox * loss_bbox + λ_giou * loss_giou
+#     return total_loss
+
+
+def detr_loss(pred_logits, pred_boxes, target_labels, target_boxes, eos_coef=0.1):
+    # Number of queries
+    num_queries = pred_logits.shape[0]
+    num_classes = pred_logits.shape[1]
+    # Prepare "no-object" targets for all queries
+    target_classes_full = torch.full(
+        (num_queries,),
+        0,  # 0 = "no-object" index
+        dtype=torch.long,
+        device=pred_logits.device,
+    )
+
+    if target_labels.numel() > 0:
+        # Hungarian matching
+        indices_pred, indices_target = hungarian_match(
+            pred_logits, pred_boxes, target_labels, target_boxes
+        )
+
+        # Assign matched target labels to matched predictions
+        target_classes_full[indices_pred] = target_labels[indices_target]
+
+        matched_pred_boxes = pred_boxes[indices_pred]
+        matched_target_boxes = target_boxes[indices_target]
+
+        # Box regression loss
+        bbox_loss = F.l1_loss(matched_pred_boxes, matched_target_boxes)
+
+        giou = torch_giou(matched_pred_boxes, matched_target_boxes)
+        giou_loss = 1.0 - giou.diag().mean()
+    else:
+        bbox_loss = torch.tensor(0.0, device=pred_logits.device)
+        giou_loss = torch.tensor(0.0, device=pred_logits.device)
+
+    # Classification loss with "no-object" weighting
+    weight = torch.ones(num_classes, device=pred_logits.device)
+    weight[0] = eos_coef  # lower weight for no-object
+    cls_loss = F.cross_entropy(pred_logits, target_classes_full, weight=weight)
+
+    λ_cls, λ_bbox, λ_giou = 1.0, 5.0, 2.0
     total_loss = λ_cls * cls_loss + λ_bbox * bbox_loss + λ_giou * giou_loss
-    if torch.isnan(total_loss) or torch.isinf(total_loss):
-        print("NaN or Inf detected in loss!")
-        print("pred_logits:", pred_logits)
-        print("pred_boxes:", pred_boxes)
-        print("target_labels:", target_labels)
-        print("target_boxes:", target_boxes)
-        # exit()
-    if total_loss.item() < 0:
-        print("Negative loss detected!")
-        print("pred:", indices_pred)
-        print("tgt:", indices_target)
-        print("giou_loss:", giou_loss.item())
-        print("Pred boxes:", matched_pred_boxes)
-        print("Tgt boxes:", matched_target_boxes)
-
-
-    
     return total_loss
+
+
+# def detr_loss(pred_logits, pred_boxes, target_labels, target_boxes):
+#     if target_labels.numel() == 0:
+#         # No objects in this image
+#         # You can still compute classification loss vs. "no object" class
+#         # Or just return 0.0
+#         return torch.tensor(0.0, device=pred_logits.device)
+#     λ_cls = 1.0
+#     λ_bbox = 5.0
+#     λ_giou = 2.0
+
+#     # Get matches
+#     indices_pred, indices_target = hungarian_match(
+#         pred_logits, pred_boxes, target_labels, target_boxes
+#     )
+#     # Select matched predictions and targets
+#     matched_pred_logits = pred_logits[indices_pred]
+#     matched_pred_boxes = pred_boxes[indices_pred]
+#     # These lines reorder the ground truth labels and boxes to match the order of the predictions.
+#     matched_target_labels = target_labels[indices_target]
+#     matched_target_boxes = target_boxes[indices_target]
+
+#     # Classification loss (cross-entropy)
+#     cls_loss = F.cross_entropy(matched_pred_logits, matched_target_labels)
+
+#     # Box regression loss (L1 loss)
+#     bbox_loss = F.l1_loss(matched_pred_boxes, matched_target_boxes)
+
+#     # GIoU loss
+#     # pred_boxes_xyxy = box_cxcywh_to_xyxy(matched_pred_boxes)
+#     # target_boxes_xyxy = box_cxcywh_to_xyxy(matched_target_boxes)
+
+#     giou = torch_giou(matched_pred_boxes, matched_target_boxes)
+#     giou_loss = 1.0 - giou.diag().mean()
+
+#     # Total loss with weights
+#     total_loss = λ_cls * cls_loss + λ_bbox * bbox_loss + λ_giou * giou_loss
+#     if torch.isnan(total_loss) or torch.isinf(total_loss):
+#         print("NaN or Inf detected in loss!")
+#         print("pred_logits:", pred_logits)
+#         print("pred_boxes:", pred_boxes)
+#         print("target_labels:", target_labels)
+#         print("target_boxes:", target_boxes)
+#         # exit()
+#     if total_loss.item() < 0:
+#         print("Negative loss detected!")
+#         print("pred:", indices_pred)
+#         print("tgt:", indices_target)
+#         print("giou_loss:", giou_loss.item())
+#         print("Pred boxes:", matched_pred_boxes)
+#         print("Tgt boxes:", matched_target_boxes)
+
+#     return total_loss
 
 
 def compute_loss(outputs, targets, device):
@@ -145,18 +238,17 @@ def compute_loss(outputs, targets, device):
     targets: list of dicts, length = batch_size
         each dict has keys 'labels' (tensor) and 'boxes' (tensor)
     """
-    batch_size = outputs['pred_logits'].shape[0]
+    batch_size = outputs["pred_logits"].shape[0]
     losses = []
 
     for i in range(batch_size):
-        target_labels = targets[i]['labels'] - 1  # Make sure this is a tensor
+        # target_labels = targets[i]["labels"] - 1  # Make sure this is a tensor
         loss_i = detr_loss(
-            outputs['pred_logits'][i],  # [num_queries, num_classes]
-            outputs['pred_boxes'][i],   # [num_queries, 4]
-            target_labels.to(device),
-            targets[i]['boxes'].to(device)
+            outputs["pred_logits"][i],  # [num_queries, num_classes]
+            outputs["pred_boxes"][i],  # [num_queries, 4]
+            targets[i]["labels"].to(device),
+            targets[i]["boxes"].to(device),
         )
         losses.append(loss_i)
 
     return torch.stack(losses).mean()
-
