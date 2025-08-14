@@ -31,7 +31,7 @@ def train(num_epochs, model, data_loader, optimizer, device):
         # start_epoch = checkpoint['epoch']
     # print(f"Resuming training from epoch {start_epoch}")
     for epoch in range(num_epochs):
-        print(f"✨epoch {epoch}")
+        print(f"✨ epoch {epoch}")
         train_one_epoch(model, data_loader, optimizer, device)
         torch.save(model.state_dict(), "saved_model.pth")
         print(f"epoch {epoch} ✅ Model saved to 'saved_model.pth'")

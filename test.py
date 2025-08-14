@@ -29,7 +29,7 @@ def draw_boxes(image, boxes, scores, labels, threshold=0.7):
             continue
         x_min, y_min, x_max, y_max = box
         draw.rectangle([x_min, y_min, x_max, y_max], outline="red", width=2)
-        draw.text((x_min, y_min), f"{label}: {score:.2f}", fill="white")
+        draw.text((x_min, y_min), f"{label}: {score:.2f}", fill="black")
     return image
 
 
@@ -79,7 +79,7 @@ def run_inference(image_path, model_path):
     scores, labels = probs.max(-1)  # Get max score and corresponding class index
 
     # Filter boxes with score > threshold
-    keep = scores > 0.7
+    keep = scores > 0.8
     boxes = boxes[keep]
     scores = scores[keep]
     labels = labels[keep]
@@ -96,4 +96,4 @@ def run_inference(image_path, model_path):
 
 
 if __name__ == "__main__":
-    run_inference("sheep.jpg", "saved_model.pth")
+    run_inference("bottle.jpg", "saved_model.pth")
